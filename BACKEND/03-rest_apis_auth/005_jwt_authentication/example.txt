@@ -1,0 +1,17 @@
+/*
+ * 005 Jwt Authentication - Code Example
+ * 
+ * This file contains practical implementation examples for:
+ * 005 Jwt Authentication
+ */
+
+// TODO: Add specific code examples for 005_jwt_authentication
+// This will include:
+// - Basic implementation
+// - Advanced usage patterns  
+// - Best practices demonstration
+// - Common use cases
+
+public class Example {
+    // Implementation will be added based on specific topic
+}

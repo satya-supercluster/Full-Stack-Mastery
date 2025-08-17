@@ -1,0 +1,17 @@
+/*
+ * 008 Api Gateway Pubsub - Code Example
+ * 
+ * This file contains practical implementation examples for:
+ * 008 Api Gateway Pubsub
+ */
+
+// TODO: Add specific code examples for 008_api_gateway_pubsub
+// This will include:
+// - Basic implementation
+// - Advanced usage patterns  
+// - Best practices demonstration
+// - Common use cases
+
+public class Example {
+    // Implementation will be added based on specific topic
+}

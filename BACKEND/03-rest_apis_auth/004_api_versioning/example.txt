@@ -1,0 +1,17 @@
+/*
+ * 004 Api Versioning - Code Example
+ * 
+ * This file contains practical implementation examples for:
+ * 004 Api Versioning
+ */
+
+// TODO: Add specific code examples for 004_api_versioning
+// This will include:
+// - Basic implementation
+// - Advanced usage patterns  
+// - Best practices demonstration
+// - Common use cases
+
+public class Example {
+    // Implementation will be added based on specific topic
+}
