@@ -805,6 +805,773 @@ class UserIntegrationTest {
 }
 ```
 
+## Running Unit Tests
+
+### 1. **Prerequisites**
+
+Add these dependencies to your `pom.xml`:
+
+```xml
+<dependencies>
+    <!-- Spring Boot Test Starter -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-test</artifactId>
+        <scope>test</scope>
+    </dependency>
+    
+    <!-- Testcontainers (for integration tests with real database) -->
+    <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>postgresql</artifactId>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+```
+
+### 2. **Test Configuration Files**
+
+Create `src/test/resources/application-test.properties`:
+
+```properties
+# Test Database Configuration
+spring.datasource.url=jdbc:h2://mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+spring.datasource.driver-class-name=org.h2.Driver
+spring.datasource.username=sa
+spring.datasource.password=
+
+# JPA Configuration for Tests
+spring.jpa.database-platform=org.hibernate.dialect.H2Dialect
+spring.jpa.hibernate.ddl-auto=create-drop
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+
+# Logging Configuration
+logging.level.org.springframework.test=DEBUG
+logging.level.org.hibernate.SQL=DEBUG
+logging.level.org.hibernate.type.descriptor.sql.BasicBinder=TRACE
+```
+
+### 3. **Complete Test Examples**
+
+#### Repository Layer Tests
+
+```java
+// UserRepositoryTest.java
+package com.example.demo.repository;
+
+import com.example.demo.model.User;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
+import org.springframework.test.context.TestPropertySource;
+
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@DataJpaTest
+@TestPropertySource(locations = "classpath:application-test.properties")
+class UserRepositoryTest {
+    
+    @Autowired
+    private TestEntityManager entityManager;
+    
+    @Autowired
+    private UserRepository userRepository;
+    
+    private User testUser;
+    
+    @BeforeEach
+    void setUp() {
+        testUser = new User("John Doe", "john@example.com");
+        entityManager.persistAndFlush(testUser);
+    }
+    
+    @Test
+    void findByEmail_ShouldReturnUser_WhenEmailExists() {
+        // When
+        Optional<User> found = userRepository.findByEmail("john@example.com");
+        
+        // Then
+        assertThat(found).isPresent();
+        assertThat(found.get().getName()).isEqualTo("John Doe");
+        assertThat(found.get().getEmail()).isEqualTo("john@example.com");
+    }
+    
+    @Test
+    void findByEmail_ShouldReturnEmpty_WhenEmailDoesNotExist() {
+        // When
+        Optional<User> found = userRepository.findByEmail("nonexistent@example.com");
+        
+        // Then
+        assertThat(found).isEmpty();
+    }
+    
+    @Test
+    void findByNameContainingIgnoreCase_ShouldReturnMatchingUsers() {
+        // Given
+        User anotherUser = new User("Jane Doe", "jane@example.com");
+        entityManager.persistAndFlush(anotherUser);
+        
+        // When
+        List<User> found = userRepository.findByNameContainingIgnoreCase("doe");
+        
+        // Then
+        assertThat(found).hasSize(2);
+        assertThat(found).extracting(User::getName).contains("John Doe", "Jane Doe");
+    }
+    
+    @Test
+    void existsByEmail_ShouldReturnTrue_WhenEmailExists() {
+        // When
+        boolean exists = userRepository.existsByEmail("john@example.com");
+        
+        // Then
+        assertThat(exists).isTrue();
+    }
+    
+    @Test
+    void existsByEmail_ShouldReturnFalse_WhenEmailDoesNotExist() {
+        // When
+        boolean exists = userRepository.existsByEmail("nonexistent@example.com");
+        
+        // Then
+        assertThat(exists).isFalse();
+    }
+}
+```
+
+#### Service Layer Tests
+
+```java
+// UserServiceImplTest.java
+package com.example.demo.service.impl;
+
+import com.example.demo.dto.UserRequestDTO;
+import com.example.demo.dto.UserResponseDTO;
+import com.example.demo.model.User;
+import com.example.demo.repository.UserRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import javax.persistence.EntityNotFoundException;
+import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class UserServiceImplTest {
+    
+    @Mock
+    private UserRepository userRepository;
+    
+    @InjectMocks
+    private UserServiceImpl userService;
+    
+    private User testUser;
+    private UserRequestDTO userRequestDTO;
+    private UserResponseDTO expectedResponseDTO;
+    
+    @BeforeEach
+    void setUp() {
+        testUser = new User("John Doe", "john@example.com");
+        testUser.setId(1L);
+        
+        userRequestDTO = new UserRequestDTO("John Doe", "john@example.com");
+        
+        expectedResponseDTO = new UserResponseDTO(
+            1L, "John Doe", "john@example.com", 
+            LocalDateTime.now(), LocalDateTime.now()
+        );
+    }
+    
+    @Test
+    void createUser_ShouldReturnUserResponseDTO_WhenValidRequest() {
+        // Given
+        when(userRepository.existsByEmail("john@example.com")).thenReturn(false);
+        when(userRepository.save(any(User.class))).thenReturn(testUser);
+        
+        // When
+        UserResponseDTO result = userService.createUser(userRequestDTO);
+        
+        // Then
+        assertThat(result.getName()).isEqualTo("John Doe");
+        assertThat(result.getEmail()).isEqualTo("john@example.com");
+        assertThat(result.getId()).isEqualTo(1L);
+        
+        verify(userRepository).existsByEmail("john@example.com");
+        verify(userRepository).save(any(User.class));
+    }
+    
+    @Test
+    void createUser_ShouldThrowException_WhenEmailAlreadyExists() {
+        // Given
+        when(userRepository.existsByEmail("john@example.com")).thenReturn(true);
+        
+        // When & Then
+        assertThatThrownBy(() -> userService.createUser(userRequestDTO))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("already exists");
+        
+        verify(userRepository).existsByEmail("john@example.com");
+        verify(userRepository, never()).save(any(User.class));
+    }
+    
+    @Test
+    void getUserById_ShouldReturnUser_WhenUserExists() {
+        // Given
+        when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+        
+        // When
+        UserResponseDTO result = userService.getUserById(1L);
+        
+        // Then
+        assertThat(result.getId()).isEqualTo(1L);
+        assertThat(result.getName()).isEqualTo("John Doe");
+        assertThat(result.getEmail()).isEqualTo("john@example.com");
+        
+        verify(userRepository).findById(1L);
+    }
+    
+    @Test
+    void getUserById_ShouldThrowException_WhenUserDoesNotExist() {
+        // Given
+        when(userRepository.findById(1L)).thenReturn(Optional.empty());
+        
+        // When & Then
+        assertThatThrownBy(() -> userService.getUserById(1L))
+            .isInstanceOf(EntityNotFoundException.class)
+            .hasMessageContaining("User not found with id: 1");
+        
+        verify(userRepository).findById(1L);
+    }
+    
+    @Test
+    void getAllUsers_ShouldReturnAllUsers() {
+        // Given
+        User user2 = new User("Jane Doe", "jane@example.com");
+        user2.setId(2L);
+        
+        when(userRepository.findAll()).thenReturn(Arrays.asList(testUser, user2));
+        
+        // When
+        List<UserResponseDTO> result = userService.getAllUsers();
+        
+        // Then
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).getName()).isEqualTo("John Doe");
+        assertThat(result.get(1).getName()).isEqualTo("Jane Doe");
+        
+        verify(userRepository).findAll();
+    }
+    
+    @Test
+    void updateUser_ShouldUpdateAndReturnUser_WhenValidRequest() {
+        // Given
+        UserRequestDTO updateRequest = new UserRequestDTO("John Updated", "john.updated@example.com");
+        User updatedUser = new User("John Updated", "john.updated@example.com");
+        updatedUser.setId(1L);
+        
+        when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+        when(userRepository.existsByEmail("john.updated@example.com")).thenReturn(false);
+        when(userRepository.save(any(User.class))).thenReturn(updatedUser);
+        
+        // When
+        UserResponseDTO result = userService.updateUser(1L, updateRequest);
+        
+        // Then
+        assertThat(result.getName()).isEqualTo("John Updated");
+        assertThat(result.getEmail()).isEqualTo("john.updated@example.com");
+        
+        verify(userRepository).findById(1L);
+        verify(userRepository).save(any(User.class));
+    }
+    
+    @Test
+    void deleteUser_ShouldDeleteUser_WhenUserExists() {
+        // Given
+        when(userRepository.existsById(1L)).thenReturn(true);
+        
+        // When
+        userService.deleteUser(1L);
+        
+        // Then
+        verify(userRepository).existsById(1L);
+        verify(userRepository).deleteById(1L);
+    }
+    
+    @Test
+    void deleteUser_ShouldThrowException_WhenUserDoesNotExist() {
+        // Given
+        when(userRepository.existsById(1L)).thenReturn(false);
+        
+        // When & Then
+        assertThatThrownBy(() -> userService.deleteUser(1L))
+            .isInstanceOf(EntityNotFoundException.class)
+            .hasMessageContaining("User not found with id: 1");
+        
+        verify(userRepository).existsById(1L);
+        verify(userRepository, never()).deleteById(anyLong());
+    }
+}
+```
+
+#### Controller Layer Tests
+
+```java
+// UserControllerTest.java
+package com.example.demo.controller;
+
+import com.example.demo.dto.UserRequestDTO;
+import com.example.demo.dto.UserResponseDTO;
+import com.example.demo.service.UserService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import javax.persistence.EntityNotFoundException;
+import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(UserController.class)
+class UserControllerTest {
+    
+    @Autowired
+    private MockMvc mockMvc;
+    
+    @MockBean
+    private UserService userService;
+    
+    @Autowired
+    private ObjectMapper objectMapper;
+    
+    private UserRequestDTO userRequestDTO;
+    private UserResponseDTO userResponseDTO;
+    
+    @BeforeEach
+    void setUp() {
+        userRequestDTO = new UserRequestDTO("John Doe", "john@example.com");
+        userResponseDTO = new UserResponseDTO(
+            1L, "John Doe", "john@example.com", 
+            LocalDateTime.now(), LocalDateTime.now()
+        );
+    }
+    
+    @Test
+    void createUser_ShouldReturnCreatedUser_WhenValidRequest() throws Exception {
+        // Given
+        when(userService.createUser(any(UserRequestDTO.class))).thenReturn(userResponseDTO);
+        
+        // When & Then
+        mockMvc.perform(post("/api/users")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userRequestDTO)))
+                .andDo(print())
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(1L))
+                .andExpect(jsonPath("$.name").value("John Doe"))
+                .andExpect(jsonPath("$.email").value("john@example.com"));
+    }
+    
+    @Test
+    void createUser_ShouldReturnBadRequest_WhenInvalidRequest() throws Exception {
+        // Given
+        UserRequestDTO invalidRequest = new UserRequestDTO("", "invalid-email");
+        
+        // When & Then
+        mockMvc.perform(post("/api/users")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(invalidRequest)))
+                .andDo(print())
+                .andExpect(status().isBadRequest());
+    }
+    
+    @Test
+    void getUserById_ShouldReturnUser_WhenUserExists() throws Exception {
+        // Given
+        when(userService.getUserById(1L)).thenReturn(userResponseDTO);
+        
+        // When & Then
+        mockMvc.perform(get("/api/users/1"))
+                .andDo(print())
+                .andExpected(status().isOk())
+                .andExpect(jsonPath("$.id").value(1L))
+                .andExpect(jsonPath("$.name").value("John Doe"))
+                .andExpect(jsonPath("$.email").value("john@example.com"));
+    }
+    
+    @Test
+    void getUserById_ShouldReturnNotFound_WhenUserDoesNotExist() throws Exception {
+        // Given
+        when(userService.getUserById(1L)).thenThrow(new EntityNotFoundException("User not found"));
+        
+        // When & Then
+        mockMvc.perform(get("/api/users/1"))
+                .andDo(print())
+                .andExpect(status().isNotFound());
+    }
+    
+    @Test
+    void getAllUsers_ShouldReturnAllUsers() throws Exception {
+        // Given
+        UserResponseDTO user2 = new UserResponseDTO(
+            2L, "Jane Doe", "jane@example.com",
+            LocalDateTime.now(), LocalDateTime.now()
+        );
+        List<UserResponseDTO> users = Arrays.asList(userResponseDTO, user2);
+        
+        when(userService.getAllUsers()).thenReturn(users);
+        
+        // When & Then
+        mockMvc.perform(get("/api/users"))
+                .andDo(print())
+                .andExpect(status().isOk())
+                .andExpected(jsonPath("$.length()").value(2))
+                .andExpected(jsonPath("$[0].name").value("John Doe"))
+                .andExpected(jsonPath("$[1].name").value("Jane Doe"));
+    }
+    
+    @Test
+    void updateUser_ShouldReturnUpdatedUser_WhenValidRequest() throws Exception {
+        // Given
+        UserRequestDTO updateRequest = new UserRequestDTO("John Updated", "john.updated@example.com");
+        UserResponseDTO updatedResponse = new UserResponseDTO(
+            1L, "John Updated", "john.updated@example.com",
+            LocalDateTime.now(), LocalDateTime.now()
+        );
+        
+        when(userService.updateUser(anyLong(), any(UserRequestDTO.class))).thenReturn(updatedResponse);
+        
+        // When & Then
+        mockMvc.perform(put("/api/users/1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(updateRequest)))
+                .andDo(print())
+                .andExpect(status().isOk())
+                .andExpected(jsonPath("$.name").value("John Updated"))
+                .andExpected(jsonPath("$.email").value("john.updated@example.com"));
+    }
+    
+    @Test
+    void deleteUser_ShouldReturnNoContent_WhenUserExists() throws Exception {
+        // When & Then
+        mockMvc.perform(delete("/api/users/1"))
+                .andDo(print())
+                .andExpect(status().isNoContent());
+    }
+}
+```
+
+### 4. **Running Tests - Different Methods**
+
+#### Method 1: Using Maven Commands
+
+```bash
+# Run all tests
+mvn test
+
+# Run tests with verbose output
+mvn test -Dtest.verbose=true
+
+# Run specific test class
+mvn test -Dtest=UserServiceImplTest
+
+# Run specific test method
+mvn test -Dtest=UserServiceImplTest#createUser_ShouldReturnUserResponseDTO_WhenValidRequest
+
+# Run tests with coverage report
+mvn test jacoco:report
+
+# Run tests and skip compilation
+mvn surefire:test
+
+# Run tests with specific profile
+mvn test -Ptest
+
+# Run integration tests only
+mvn test -Dtest=*IntegrationTest
+
+# Run unit tests only (excluding integration tests)
+mvn test -Dtest=!*IntegrationTest
+```
+
+#### Method 2: Using Gradle Commands
+
+```bash
+# Run all tests
+./gradlew test
+
+# Run specific test class
+./gradlew test --tests UserServiceImplTest
+
+# Run specific test method
+./gradlew test --tests "UserServiceImplTest.createUser_ShouldReturnUserResponseDTO_WhenValidRequest"
+
+# Run tests with continuous build
+./gradlew test --continuous
+
+# Run tests with detailed output
+./gradlew test --info
+
+# Run tests and generate reports
+./gradlew test jacocoTestReport
+```
+
+#### Method 3: Using IDE
+
+**IntelliJ IDEA:**
+
+- Right-click on test class/method → "Run Test"
+- Use Ctrl+Shift+F10 (Windows/Linux) or Cmd+Shift+R (Mac)
+- Use the green arrow buttons in the gutter
+
+**Eclipse:**
+
+- Right-click on test class → "Run As" → "JUnit Test"
+- Use Alt+Shift+X, T shortcut
+
+**VS Code:**
+
+- Install Java Test Runner extension
+- Use CodeLens "Run Test" links
+- Use Ctrl+Shift+P → "Java: Run Tests"
+
+### 5. **Test Reports and Coverage**
+
+#### Configure JaCoCo for Coverage (Maven)
+
+```xml
+<plugin>
+    <groupId>org.jacoco</groupId>
+    <artifactId>jacoco-maven-plugin</artifactId>
+    <version>0.8.8</version>
+    <executions>
+        <execution>
+            <goals>
+                <goal>prepare-agent</goal>
+            </goals>
+        </execution>
+        <execution>
+            <id>report</id>
+            <phase>test</phase>
+            <goals>
+                <goal>report</goal>
+            </goals>
+        </execution>
+        <execution>
+            <id>check</id>
+            <goals>
+                <goal>check</goal>
+            </goals>
+            <configuration>
+                <rules>
+                    <rule>
+                        <element>PACKAGE</element>
+                        <limits>
+                            <limit>
+                                <counter>LINE</counter>
+                                <value>COVEREDRATIO</value>
+                                <minimum>0.80</minimum>
+                            </limit>
+                        </limits>
+                    </rule>
+                </rules>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+```
+
+#### Run Tests with Coverage
+
+```bash
+# Generate coverage report
+mvn clean test jacoco:report
+
+# View coverage report
+open target/site/jacoco/index.html
+```
+
+### 6. **Test Categories and Profiles**
+
+#### Create Test Categories
+
+```java
+// Marker interfaces for test categories
+public interface UnitTest {}
+public interface IntegrationTest {}
+public interface SlowTest {}
+
+// Apply categories to tests
+@Tag("unit")
+class UserServiceImplTest {
+    // Unit tests
+}
+
+@Tag("integration")
+@SpringBootTest
+class UserIntegrationTest {
+    // Integration tests  
+}
+```
+
+#### Maven Profiles for Different Test Types
+
+```xml
+<profiles>
+    <profile>
+        <id>unit-tests</id>
+        <build>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <groups>unit</groups>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </build>
+    </profile>
+    
+    <profile>
+        <id>integration-tests</id>
+        <build>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <groups>integration</groups>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </build>
+    </profile>
+</profiles>
+```
+
+#### Run Specific Test Categories
+
+```bash
+# Run only unit tests
+mvn test -Punit-tests
+
+# Run only integration tests  
+mvn test -Pintegration-tests
+```
+
+### 7. **Continuous Integration Setup**
+
+#### GitHub Actions Example
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Set up JDK 11
+      uses: actions/setup-java@v2
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+    
+    - name: Cache Maven packages
+      uses: actions/cache@v2
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        
+    - name: Run Unit Tests
+      run: mvn test -Punit-tests
+      
+    - name: Run Integration Tests
+      run: mvn test -Pintegration-tests
+      
+    - name: Generate Coverage Report
+      run: mvn jacoco:report
+      
+    - name: Upload Coverage to Codecov
+      uses: codecov/codecov-action@v2
+```
+
+### 8. **Troubleshooting Common Issues**
+
+#### Issue 1: Tests Not Found
+
+```bash
+# Make sure test classes end with "Test"
+# Make sure they're in src/test/java
+# Check Maven/Gradle configuration
+```
+
+#### Issue 2: Database Connection Issues
+
+```bash
+# Check application-test.properties
+# Ensure H2 database is in test dependencies
+# Verify @DataJpaTest annotation
+```
+
+#### Issue 3: Mock Issues
+
+```bash
+# Ensure @ExtendWith(MockitoExtension.class)
+# Check @Mock and @InjectMocks annotations
+# Verify mock behavior setup with when().thenReturn()
+```
+
+### 9. **Best Practices for Test Execution**
+
+1. **Run tests frequently during development**
+2. **Use test categories to run specific test suites**
+3. **Set up continuous integration to run tests automatically**
+4. **Monitor test coverage and aim for 80%+ coverage**
+5. **Use test profiles for different environments**
+6. **Keep integration tests separate from unit tests**
+7. **Use test containers for database integration tests**
+
 ## 🎯 Key Takeaways
 
 1. **Layered architecture promotes clean, maintainable code**
@@ -814,5 +1581,8 @@ class UserIntegrationTest {
 5. **Write comprehensive tests for each layer**
 6. **Use DTOs to control data flow between layers**
 7. **Apply transactions appropriately in the service layer**
+8. **Run tests frequently using various methods (Maven, Gradle, IDE)**
+9. **Use test categories and profiles for organized test execution**
+10. **Monitor test coverage and maintain high code quality**
 
 This architecture pattern is ideal for medium to large Spring Boot applications where maintainability, testability, and scalability are important considerations.
